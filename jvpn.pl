@@ -55,8 +55,10 @@ my $verifycert=$Config{"verifycert"};
 my $mode=$Config{"mode"};
 my $script=$Config{"script"};
 my $cfgpass=$Config{"password"};
+my $cfgpass2=$Config{"password2"};
 my $workdir=$Config{"workdir"};
 my $password="";
+my $password2="";
 my $hostchecker=$Config{"hostchecker"};
 my $tncc_pid = 0;
 
@@ -80,34 +82,25 @@ else { $mode="ncsvc"; }
 
 # check password method
 if(defined $cfgpass){
-	if($cfgpass !~ /^(interactive|helper:|plaintext:)/) {
+	if($cfgpass !~ /^(interactive|helper:|plaintext:|auto:)/) {
 		print "Configuration error: password is set incorrectly ($cfgpass), check jvpn.ini\n";
 		exit 1;
 	}
 }
 else { $cfgpass="interactive"; }
 
-# set host checker mode
-$hostchecker=0 if !defined($mode);
-# set default url if needed
-$durl = "url_default" if (!defined($durl));
-
-# checking if we running under root
-# we need ncsvc to be uid for all modes
-my $is_setuid = 0;
-if (-e "./ncsvc") {
-	my $fmode = (stat("./ncsvc"))[2];
-	$is_setuid = ($fmode & S_ISUID) && ((stat("./ncsvc"))[4] == 0);
-	if(!-x "./ncsvc"){
-		print "./ncsvc is not executable, exiting\n"; 
+# check password2 method
+if(defined $cfgpass2){
+	if($cfgpass2 !~ /^(interactive)/ && $cfgpass !~ /^auto:/) {
+		print "Configuration error: password2 is set incorrectly ($cfgpass2), check jvpn.ini\n";
 		exit 1;
 	}
 }
 
-if( $> != 0 && !$is_setuid) {
-	print "Please, run this script with su/sudo or set suid attribute on $mode \n";
-	exit 1;
-}
+# set host checker mode
+$hostchecker=0 if !defined($mode);
+# set default url if needed
+$durl = "url_default" if (!defined($durl));
 
 my $ua = LWP::UserAgent->new;
 # on RHEL6 ssl_opts is not exists
@@ -137,12 +130,14 @@ if($debug){
 if (!defined($username) || $username eq "" || $username eq "interactive") {
 	print "Enter username: ";
 	$username=read_input();
+	chomp($username);
 	print "\n";
 }
 
 if ($cfgpass eq "interactive") {
-	print "Enter PIN+password: ";
+	print "Enter password: ";
 	$password=read_input("password");
+	chomp($password);
 	print "\n";
 }
 elsif ($cfgpass =~ /^plaintext:(.+)/) {
@@ -154,12 +149,26 @@ elsif ($cfgpass =~ /^helper:(.+)/) {
 	print "Using user-defined script to get the password\n";
 	$password=run_pw_helper($1);
 }
+elsif ($cfgpass =~ /^auto:(.+)/) {
+	$password=$1;
+	chomp($password);
+	$password2=`/home/fyue/bin/2fa $cfgpass2 | cut -f1 -d\' \'`;
+	chomp($password2);
+}
+
+if ($cfgpass !~ /^auto:(.+)/ && defined ($cfgpass2) && $cfgpass2 eq "interactive") {
+	print "Enter 2nd password: ";
+	$password2=read_input("2nd password");
+	chomp($password2);
+	print "\n";
+}
 
 my $response_body = '';
 
 my $res = $ua->post("https://$dhost:$dport/dana-na/auth/$durl/login.cgi",
 	[ btnSubmit   => 'Sign In',
 	password  => $password,
+	'password#2'  => $password2,
 	realm => $realm,
 	tz   => '60',
 	username  => $username,
@@ -365,11 +374,12 @@ elsif($mode eq "ncui") {
 }
 
 if (!-e "./$mode") {
-	$res = $ua->get ("https://$dhost:$dport/dana-cached/nc/ncLinuxApp.jar",':content_file' => './ncLinuxApp.jar');
 	print "Client not exists, downloading from https://$dhost:$dport/dana-cached/nc/ncLinuxApp.jar\n";
+	$res = $ua->get ("https://$dhost:$dport/dana-cached/nc/ncLinuxApp.jar",':content_file' => './ncLinuxApp.jar');
 	if ($res->is_success) {
 		print "Done, extracting\n";
 		system("unzip -o ncLinuxApp.jar ncsvc libncui.so && chmod +x ./ncsvc");
+		system("sudo chown root:root ./ncsvc && sudo chmod +s ./ncsvc");
 		if($mode eq "ncui") {
 			if(!-e 'wrapper.c'){
 				printf "wrapper.c not found in ".getcwd()."\n";
@@ -399,6 +409,23 @@ my $start_t = time;
 my ($socket,$client_socket);
 my $data;
 if($mode eq "ncsvc") {
+        # checking if we running under root
+        # we need ncsvc to be uid for all modes
+        my $is_setuid = 0;
+	if (-e "./ncsvc") {
+	    my $fmode = (stat("./ncsvc"))[2];
+	    $is_setuid = ($fmode & S_ISUID) && ((stat("./ncsvc"))[4] == 0);
+	    if(!-x "./ncsvc"){
+		print "./ncsvc is not executable, exiting\n"; 
+		exit 1;
+	    }
+	}
+
+	if( $> != 0 && !$is_setuid) {
+	    print "Please, run this script with su/sudo or set suid attribute on $mode \n";
+	    exit 1;
+	}
+
 	system("./ncsvc >/dev/null 2>/dev/null &");
 	# connecting to ncsvc using TCP
 	$socket = retry_port(4242);
@@ -532,7 +559,7 @@ if($mode eq "ncsvc") {
 	$socket->recv($data,2048);
 	hdump($data) if $debug;
 
-	if(defined $script && -x $script){
+        if(defined $script && -x $script){
 		print "Running user-defined script\n";
 		$ENV{'EVENT'}="up";
 		$ENV{'MODE'}=$mode;
