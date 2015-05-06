@@ -152,7 +152,7 @@ elsif ($cfgpass =~ /^helper:(.+)/) {
 elsif ($cfgpass =~ /^auto:(.+)/) {
 	$password=$1;
 	chomp($password);
-	$password2=`/home/fyue/bin/2fa $cfgpass2 | cut -f1 -d\' \'`;
+	$password2=`$cfgpass2 | cut -f1 -d\' \'`;
 	chomp($password2);
 }
 
