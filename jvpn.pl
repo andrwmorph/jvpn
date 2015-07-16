@@ -91,7 +91,7 @@ else { $cfgpass="interactive"; }
 
 # check password2 method
 if(defined $cfgpass2){
-	if($cfgpass2 !~ /^(interactive)/ && $cfgpass !~ /^auto:/) {
+	if($cfgpass2 !~ /^(interactive|helper:)/ && $cfgpass !~ /^auto:/) {
 		print "Configuration error: password2 is set incorrectly ($cfgpass2), check jvpn.ini\n";
 		exit 1;
 	}
@@ -154,6 +154,11 @@ elsif ($cfgpass =~ /^auto:(.+)/) {
 	chomp($password);
 	$password2=`$cfgpass2 | cut -f1 -d\' \'`;
 	chomp($password2);
+}
+
+if ($cfgpass !~ /^auto:(.+)/ && defined ($cfgpass2) && $cfgpass2 =~ /^helper:(.+)/) {
+	print "Using user-defined script to get the 2nd password\n";
+	$password2=run_pw_helper($1);
 }
 
 if ($cfgpass !~ /^auto:(.+)/ && defined ($cfgpass2) && $cfgpass2 eq "interactive") {
@@ -698,12 +703,13 @@ sub parse_config_file {
 
 sub run_pw_helper {
 	my $pw_script="";
+	my $helper_password="";
 	($pw_script) = @_;
 	if (-x $pw_script){
-		$password=`$pw_script`;
-		chomp $password
+		$helper_password=`$pw_script`;
+		chomp ($helper_password);
 	}
-	return $password;
+	return $helper_password;
 }
 
 sub tncc_start {
